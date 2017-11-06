@@ -1,0 +1,147 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="fr" lang="fr">
+  <head>
+    <title>Romain Deveaud - teaching</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <link rel="stylesheet" type="text/css" media="screen" href="../css/main.css" />
+    <link rel="stylesheet"
+          href="http://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/default.min.css">
+          <script src="http://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
+          <script>hljs.initHighlightingOnLoad();</script>
+  </head>
+  <body>
+    <div id="page">
+      <div id="name"><a href="index.html">Romain Deveaud</a>
+	<div id="subname"><span>homepage of a <a href="http://en.wikipedia.org/wiki/Ruby_%28programming_language%29">ruby</a> <a href="http://en.wikipedia.org/wiki/Geek">geek</a></span></div>
+      </div>
+
+      <div id="content">
+          <h1>Sub-events detection on Twitter using Python, Tweepy, and MongoDB</h1>
+          <h3 id="subtitle">A case study with BlizzCon 2017</h3>
+          <div id="date">On Monday, November 6th, 2017.</div>
+        <div id="research">
+          <p>Identifying emerging events from social media has been a recurring topic of research and engineering in the past few years, and approaches ranging from peak detection <a href="#">[1]</a> to automatic summarisation <a href="#">[2]</a> have shown to perform quite well.
+          Such approaches can be very important in domains such as security or <a href="">online reputation management</a>.
+          </p>
+          <p>Recently, I became interested in identifying sub-events in larger events, like festivals or big conventions. In this case, I was interested in the Blizzard Convention (BlizzCon) that occured early November 2017, and wanted to see if I could extract game announcements, e-sport championship results, etc... automatically from Twitter data, with as little hacking as possible.</p>
+          <p>This note is composed of two parts : first I streamed real-time Tweets related to some specific BlizzCon keywords that I stored into a Mongo database, then I analysed these Tweets in order to extract the sub-events.</p>
+
+          <h4>Setting up MongoDB and the Twitter API</h4>
+          <p>I work on an Ubuntu server with the 14.04 LTS version, and setting up a MongoDB daemon is pretty straighforward. All the relevant documentation can be found on the <a href="https://docs.mongodb.com/manual/tutorial/install-mongodb-on-ubuntu/">official Mongo website</a>.</p>
+          <p>For Tweepy, you need to have a <a href="https://apps.twitter.com/">registred application</a>, for which Twitter will give you 2 keys and 2 tokens that are needed to authentify your app and further access the API.</p>
+
+          <h4>Python environment</h4>
+          <p>The ideal way to manage different Python projects is to use virtual environments. In this project I use VirtualEnv and installed a version of Python3.4 :</p>
+          <pre><code class="shell">
+          $ virtualenv -p python3.4 blizzcon-twitter
+          $ source blizzcon-twitter/bin/activate
+          (blizzcon-twitter) $ python --version
+          Python 3.4.3
+          </code></pre>
+
+          <p>I can now install Python packages without compromising my other versions of Python. For this project I needed the Python wrappers for Mongo as well as the <a href="http://tweepy.readthedocs.io/en/v3.5.0/">Tweepy</a> library which allows us to conveniently access the Twitter API.</p>
+          <pre><code class="shell">
+          $ pip install tweepy pymongo
+          </code></pre>
+
+          <h4>Streaming Tweets</h4>
+          <p>The <a href="https://developer.twitter.com/en/docs/tweets/filter-realtime/overview">Twitter streaming API</a> allows to collect Tweets related to given keywords. However it only contains a small portion of all the Tweets truly emmitted at a certain time, which is still good for this toy example.</p>
+          <p>I'll first create a small stream listener that will pull Tweets related to one single keyword.</p>
+          <pre><code class="python">
+          #!/usr/bin/env python
+          # -*- coding: utf-8 -*-
+          import tweepy
+          import datetime
+
+          class SimpleStreamListener(tweepy.StreamListener):
+          
+            def on_status(self,tweet):
+              print(" ["+datetime.datetime.now().strftime("%Y-%m-%d %X")+"] => " +tweet.text)
+            
+            def on_error(self,status):
+              if status == 420:
+                return False
+          </code></pre>
+          <p>           
+              If Twitter tells us that we crawled too much Tweets (i.e. reached the limit), we need
+              to disconnect or they will prevent us for crawling again. If we keep trying to reconnect
+              they will extend the duration of the ban, and can ultimately ban our IP. That's why I return <code>False</code> if I get an error 420.
+</p>
+
+        <pre><code class="python">
+        # The keys and token are given by Twitter.
+        auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
+        auth.set_access_token(access_token, access_token_secret)
+
+        api = tweepy.API(auth)
+
+        stream_listener = SimpleStreamListener()
+        stream = tweepy.Stream(auth = api.auth, listener=stream_listener)
+        stream.filter(track=['blizzcon'])
+        </code></pre>
+        
+<p>The listener now fetches all Tweets mentioning the keyword <code>blizzcon</code> and displays them on the console. If we want to filter more keywords, just add more !</p>
+
+        <pre><code class="python">
+        stream.filter(track=['blizzcon','\"World of Warcraft\"','warcraft','overwatch','blizzard','starcraft','hearthstone','anaheim','\"Heroes of the Storm\"'])
+        </code></pre>
+
+        <h4>Storing Tweets in Mongo</h4>
+        <p>Now we can extend the stream listener so that it can tell our Mongo database to store Tweets instead of just displaying the text.</p>
+        <code><pre class="python">
+        #!/usr/bin/env python
+        # -*- coding: utf-8 -*-
+        import tweepy
+        import datetime
+
+        import pymongo
+
+        class SimpleStreamListener(tweepy.StreamListener):
+            connection = pymongo.MongoClient(
+            'localhost',
+            27017
+            )
+            db = connection['tweetcrawl']
+            collection = db['tweets']
+
+            def on_status(self,tweet):
+              collection.insert({
+                'tweet_id' : tweet.id,
+                'text' : tweet.text,
+                'date_crawled' : datetime.datetime.now(),
+                'created_at' : tweet.created_at,
+                'user_id' : tweet.user.id,
+                'user_name' : tweet.user.name,
+                'hashtags' : tweet.entities['hashtags'],
+                'urls' : tweet.entities['urls'],
+                'lang' : tweet.lang
+              })
+        </code></pre>
+    
+
+        <div id="bibliography">
+          <div class="bib-item">[1]</div>
+          <div class="bib-item">[2]</div>
+        </div>
+        </div>
+      </div>
+      <div id="menu">
+	<span><a href="http://romaindeveaud.info/blog" target="_blank_">blog</a></span> - 
+	<span><a href="publications.html">publications</a></span> - 
+	<span><a href="teaching.html">teaching</a></span> - 
+	<span><a href="RomainDeveaudCV.pdf">cv</a></span> -
+  <span><a href="http://github.com/romaindeveaud" target="_blank">github</a></span>
+      </div>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-40913011-1', 'romaindeveaud.info');
+  ga('send', 'pageview');
+
+</script>
+  </body>
+</html>

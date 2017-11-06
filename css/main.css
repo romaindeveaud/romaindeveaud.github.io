@@ -149,3 +149,25 @@ height:30px;
 margin-left:-35px;
 margin-top:3px;
 }
+
+
+/* specific CSS for the blog pages */
+#subtitle {
+  color:#C0C0C0;
+  letter-spacing:0.3em;
+  margin-left:25%;
+}
+
+div #date {
+  font-size:0.8em;
+  letter-spacing:0.1em;
+  color:#444;
+  font-style:italic; 
+}
+
+div #content h4 {
+  margin-top:30px;
+  margin-bottom:10px;
+  color:#333;
+}
+
